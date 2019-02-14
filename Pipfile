@@ -9,6 +9,7 @@ jupyterlab = "*"
 torch = "*"
 pandas = "*"
 ujson = "*"
+tqdm = "*"
 
 [dev-packages]
 
