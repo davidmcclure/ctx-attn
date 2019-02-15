@@ -220,6 +220,45 @@ class TokenLSTM(nn.Module):
         return x, states
 
 
+ATTN_HIDDEN_SIZE = 200
+
+
+class Attention(nn.Module):
+
+    def __init__(self, input_size, hidden_size=ATTN_HIDDEN_SIZE):
+
+        super().__init__()
+
+        self.score = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 1),
+        )
+
+        self.out_dim = input_size
+
+    def forward(self, xs):
+        """Score embeddings, regroup by seq, linearly combine states.
+        """
+        sizes = list(map(len, xs))
+
+        attn = self.score(torch.cat(xs))
+
+        dists = [
+            F.softmax(scores.squeeze(), dim=0)
+            for scores in utils.group_by_sizes(attn, sizes)
+        ]
+
+        x_attn = torch.stack([
+            torch.sum(x * dist.view(-1, 1), 0)
+            for x, dist in zip(xs, dists)
+        ])
+
+        return x_attn, dists
+
+
 CLF_EMBED_DIM = 512
 
 
@@ -237,7 +276,16 @@ class Classifier(nn.Module):
         self.embed_tokens = TokenEmbedding(token_counts)
         self.encode_lines = TokenLSTM(self.embed_tokens.out_dim)
 
-        self.merge = nn.Linear(self.encode_lines.out_dim, embed_dim)
+        self.attn = Attention(self.embed_tokens.out_dim)
+        self.attn_ctx = Attention(self.encode_lines.out_dim)
+
+        line_dim = (
+            self.encode_lines.out_dim +
+            self.attn.out_dim +
+            self.attn_ctx.out_dim
+        )
+
+        self.merge = nn.Linear(line_dim, embed_dim)
 
         self.dropout = nn.Dropout()
 
@@ -260,6 +308,14 @@ class Classifier(nn.Module):
 
         # Embed lines.
         x, states = self.encode_lines(xs)
+
+        # Attend over raw token embeddings.
+        attn, attn_dists = self.attn(xs)
+
+        # Attend over LSTM states.
+        attn_ctx, attn_ctx_dists = self.attn_ctx(states)
+
+        x = torch.cat([x, attn, attn_ctx], 1)])
 
         # Blend encoder outputs, dropout.
         x = self.merge(x)
