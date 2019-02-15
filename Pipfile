@@ -12,6 +12,8 @@ ujson = "*"
 tqdm = "*"
 torchtext = "*"
 numpy = "*"
+click = "*"
+sklearn = "*"
 
 [dev-packages]
 
