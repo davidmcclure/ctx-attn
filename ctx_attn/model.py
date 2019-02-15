@@ -4,10 +4,14 @@ import torch
 import numpy as np
 import string
 
+from itertools import chain
+
 from torch import nn
 from torchtext.vocab import Vocab, Vectors
 from torch.nn.utils import rnn
 from torch.nn import functional as F
+
+from . import utils
 
 
 DEVICE = (torch.device('cuda')
@@ -37,7 +41,7 @@ class PretrainedTokenEmbedding(nn.Module):
         """Map to token embeddings.
         """
         x = [self.vocab.stoi[t] for t in tokens]
-        x = torch.LongTensor(x).on(DEVICE)
+        x = torch.LongTensor(x).to(DEVICE)
 
         return self.embed(x)
 
@@ -71,7 +75,7 @@ class CharEmbedding(nn.Embedding):
 
         idxs = [self.ctoi(c) for c in chars]
 
-        return torch.LongTensor(idxs).on(DEVICE)
+        return torch.LongTensor(idxs).to(DEVICE)
 
     def forward(self, tokens, min_size=7):
         """Batch-embed token chars.
@@ -141,7 +145,7 @@ class TokenEmbedding(nn.Module):
         super().__init__()
 
         self.embed_t = PretrainedTokenEmbedding(token_counts)
-        self.embed_c = CharCNN()]
+        self.embed_c = CharCNN()
 
         self.out_dim = self.embed_t.out_dim + self.embed_c.out_dim
 
@@ -196,7 +200,7 @@ class TokenLSTM(nn.Module):
         sort_idxs = np.argsort(sizes)[::-1]
 
         # Indexes to restore original order.
-        unsort_idxs = torch.from_numpy(np.argsort(sort_idxs)).on(DEVICE)
+        unsort_idxs = torch.from_numpy(np.argsort(sort_idxs)).to(DEVICE)
 
         # Sort by size descending.
         xs = [xs[i] for i in sort_idxs]
@@ -245,17 +249,17 @@ class Classifier(nn.Module):
     def embed(self, lines):
         """Embed lines.
         """
-        tokens = [line['clf_tokens'] for line in lines]
+        tokens = [line.tokens for line in lines]
 
         # Line lengths.
         sizes = [len(ts) for ts in tokens]
 
         # Embed tokens, regroup by line.
         x = self.embed_tokens(list(chain(*tokens)))
-        x = utils.group_by_sizes(x, sizes)
+        xs = utils.group_by_sizes(x, sizes)
 
         # Embed lines.
-        x = self.encode_lines(x)
+        x, states = self.encode_lines(xs)
 
         # Blend encoder outputs, dropout.
         x = self.merge(x)
@@ -272,6 +276,6 @@ class Classifier(nn.Module):
         lines, labels = list(zip(*batch))
 
         yt_idx = [self.ltoi[label] for label in labels]
-        yt = torch.LongTensor(yt_idx).type(itype)
+        yt = torch.LongTensor(yt_idx).to(DEVICE)
 
         return lines, yt
