@@ -1,13 +1,14 @@
 
 
 import torch
+import pandas as pd
 import click
 
 from tqdm import tqdm
-
 from torch.utils.data import DataLoader
 from torch import optim, nn
 from sklearn import metrics
+from itertools import chain
 
 from ctx_attn import logger
 from ctx_attn.model import Classifier, DEVICE
@@ -25,12 +26,12 @@ def train_epoch(model, optimizer, loss_func, split):
 
     losses = []
     with tqdm(total=len(split)) as bar:
-        for matches, yt in loader:
+        for lines, yt in loader:
 
             model.train()
             optimizer.zero_grad()
 
-            yp = model(matches)
+            yp = model(lines)
 
             loss = loss_func(yp, yt)
             loss.backward()
@@ -38,7 +39,7 @@ def train_epoch(model, optimizer, loss_func, split):
             optimizer.step()
 
             losses.append(loss.item())
-            bar.update(len(matches))
+            bar.update(len(lines))
 
     return losses
 
@@ -56,10 +57,10 @@ def predict(model, split):
 
     yt, yp = [], []
     with tqdm(total=len(split)) as bar:
-        for matches, yti in loader:
-            yp += model(matches).tolist()
+        for lines, yti in loader:
+            yp += model(lines).tolist()
             yt += yti.tolist()
-            bar.update(len(matches))
+            bar.update(len(lines))
 
     yt = torch.LongTensor(yt)
     yp = torch.FloatTensor(yp)
@@ -77,6 +78,73 @@ def evaluate(model, loss_func, split, log_acc=True):
         logger.info(f'Accuracy: {acc}')
 
     return loss_func(yp, yt)
+
+
+def train_model(model, optimizer, loss_func, corpus, max_epochs, es_wait):
+    """Train for N epochs, or stop early.
+    """
+    losses = []
+    for i in range(max_epochs):
+
+        logger.info(f'Epoch {i+1}')
+        train_epoch(model, optimizer, loss_func, corpus.train)
+
+        loss = evaluate(model, loss_func, corpus.val)
+        losses.append(loss)
+
+        logger.info(loss.item())
+
+        # Stop early.
+        if len(losses) > es_wait and losses[-1] > losses[-es_wait]:
+            break
+
+    return model
+
+
+def predict_df_rows(model, split):
+    """Predict all lines, dump DF.
+    """
+    model.eval()
+
+    loader = DataLoader(
+        split,
+        collate_fn=model.collate_batch,
+        batch_size=50,
+    )
+
+    rows = []
+    with tqdm(total=len(split)) as bar:
+        for lines, yt in loader:
+
+            x, (dists, ctx_dists) = model.embed(lines)
+            yp = model.predict(x).exp()
+
+            for line, ypi, ad, acd in zip(lines, yp, dists, ctx_dists):
+
+                preds = dict(zip(model.labels, ypi.tolist()))
+
+                rows.append(dict(
+                    **line.__dict__,
+                    preds=preds,
+                    attn_dist=ad.tolist(),
+                    attn_ctx_dist=acd.tolist(),
+                ))
+
+            bar.update(len(lines))
+
+    return rows
+
+
+def predict_df(model, corpus):
+    """Predict all splits,
+    """
+    rows = chain(
+        predict_df_rows(model, corpus.train),
+        predict_df_rows(model, corpus.val),
+        predict_df_rows(model, corpus.test),
+    )
+
+    return pd.DataFrame(rows)
 
 
 @click.group()
@@ -97,9 +165,10 @@ def build_corpus(src, dst, skim):
 
 @cli.command()
 @click.argument('src', type=click.Path())
-@click.option('--es_wait', type=int, default=5)
+@click.argument('dst', type=click.Path())
 @click.option('--max_epochs', type=int, default=100)
-def train(src, es_wait, max_epochs):
+@click.option('--es_wait', type=int, default=5)
+def train(src, dst, max_epochs, es_wait):
     """Train, dump model.
     """
     corpus = Corpus.load(src)
@@ -111,21 +180,11 @@ def train(src, es_wait, max_epochs):
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
     loss_func = nn.NLLLoss()
 
-    # Train.
-    losses = []
-    for i in range(max_epochs):
+    model = train_model(model, optimizer, loss_func, corpus,
+        max_epochs, es_wait)
 
-        logger.info(f'Epoch {i+1}')
-        train_epoch(model, optimizer, loss_func, corpus.train)
-
-        loss = evaluate(model, loss_func, corpus.val)
-        losses.append(loss)
-
-        logger.info(loss.item())
-
-        # Stop early.
-        if len(losses) > es_wait and losses[-1] > losses[-es_wait]:
-            break
+    df = predict_df(model, corpus)
+    df.to_json(dst, orient='records', lines=True)
 
 
 if __name__ == '__main__':

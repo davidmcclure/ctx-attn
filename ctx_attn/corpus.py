@@ -95,6 +95,7 @@ class Corpus:
 
         splits = random_split(pairs, sizes)
 
+        # TODO: Store under 'splits' dict?
         for split, name in zip(splits, ('train', 'val', 'test')):
 
             # Set split on corpus.
