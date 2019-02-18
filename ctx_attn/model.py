@@ -304,7 +304,7 @@ class Classifier(nn.Module):
             nn.LogSoftmax(1),
         )
 
-    def embed(self, lines, ctx=False):
+    def embed(self, lines, ctx):
         """Embed lines.
         """
         tokens = [line.tokens for line in lines]
@@ -328,8 +328,8 @@ class Classifier(nn.Module):
 
         return x, dists
 
-    def forward(self, lines):
-        x, _ = self.embed(lines)
+    def forward(self, lines, ctx=False):
+        x, _ = self.embed(lines, ctx)
         return self.predict(x)
 
     def collate_batch(self, batch):

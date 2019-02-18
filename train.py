@@ -31,9 +31,10 @@ def train_epoch(model, optimizer, loss_func, split):
             model.train()
             optimizer.zero_grad()
 
-            yp = model(lines)
+            yp = model(lines, ctx=False)
+            yp_ctx = model(lines, ctx=True)
 
-            loss = loss_func(yp, yt)
+            loss = loss_func(yp, yt) + loss_func(yp_ctx, yt)
             loss.backward()
 
             optimizer.step()
@@ -44,7 +45,7 @@ def train_epoch(model, optimizer, loss_func, split):
     return losses
 
 
-def predict(model, split):
+def predict(model, split, ctx):
     """Predict inputs in a split.
     """
     model.eval()
@@ -58,7 +59,7 @@ def predict(model, split):
     yt, yp = [], []
     with tqdm(total=len(split)) as bar:
         for lines, yti in loader:
-            yp += model(lines).tolist()
+            yp += model(lines, ctx).tolist()
             yt += yti.tolist()
             bar.update(len(lines))
 
@@ -68,14 +69,14 @@ def predict(model, split):
     return yt, yp
 
 
-def evaluate(model, loss_func, split, log_acc=True):
+def evaluate(model, loss_func, split, ctx, log_acc=True):
     """Predict matches in split, log accuracy, return loss.
     """
-    yt, yp = predict(model, split)
+    yt, yp = predict(model, split, ctx)
 
     if log_acc:
         acc = metrics.accuracy_score(yt, yp.argmax(1))
-        logger.info(f'Accuracy: {acc}')
+        logger.info(f'Accuracy (ctx={ctx}): {acc}')
 
     return loss_func(yp, yt)
 
@@ -89,9 +90,12 @@ def train_model(model, optimizer, loss_func, corpus, max_epochs, es_wait):
         logger.info(f'Epoch {i+1}')
         train_epoch(model, optimizer, loss_func, corpus.train)
 
-        loss = evaluate(model, loss_func, corpus.val)
-        losses.append(loss)
+        loss = (
+            evaluate(model, loss_func, corpus.val, ctx=False) +
+            evaluate(model, loss_func, corpus.val, ctx=True)
+        )
 
+        losses.append(loss)
         logger.info(loss.item())
 
         # Stop early.
@@ -116,17 +120,24 @@ def predict_df_rows(model, split):
     with tqdm(total=len(split)) as bar:
         for lines, yt in loader:
 
-            x, dists = model.embed(lines)
+            x, dists = model.embed(lines, ctx=False)
             yp = model.predict(x).exp()
 
-            for line, ypi, dist in zip(lines, yp, dists):
+            x, dists_ctx = model.embed(lines, ctx=True)
+            yp_ctx = model.predict(x).exp()
+
+            for line, ypi, dist, ypi_ctx, dist_ctx in \
+                zip(lines, yp, dists, yp_ctx, dists_ctx):
 
                 preds = dict(zip(model.labels, ypi.tolist()))
+                preds_ctx = dict(zip(model.labels, ypi_ctx.tolist()))
 
                 rows.append(dict(
                     **line.__dict__,
                     preds=preds,
+                    preds_ctx=preds_ctx,
                     dist=dist.tolist(),
+                    dist_ctx=dist_ctx.tolist(),
                 ))
 
             bar.update(len(lines))
