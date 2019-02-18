@@ -220,12 +220,14 @@ class TokenLSTM(nn.Module):
         return x, states
 
 
-ATTN_HIDDEN_SIZE = 200
+ATTN_HIDDEN_SIZE = 256
+ATTN_OUT_SIZE = 512
 
 
 class Attention(nn.Module):
 
-    def __init__(self, input_size, hidden_size=ATTN_HIDDEN_SIZE):
+    def __init__(self, input_size, hidden_size=ATTN_HIDDEN_SIZE,
+        out_size=ATTN_OUT_SIZE):
 
         super().__init__()
 
@@ -237,7 +239,13 @@ class Attention(nn.Module):
             nn.Linear(hidden_size, 1),
         )
 
-        self.out_dim = input_size
+        self.merge = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, out_size),
+        )
+
+        self.out_dim = out_size
 
     def forward(self, xs):
         """Score embeddings, regroup by seq, linearly combine states.
@@ -255,6 +263,8 @@ class Attention(nn.Module):
             torch.sum(x * dist.view(-1, 1), 0)
             for x, dist in zip(xs, dists)
         ])
+
+        x_attn = self.merge(x_attn)
 
         return x_attn, dists
 
