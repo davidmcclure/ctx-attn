@@ -21,6 +21,7 @@ class Line:
 
     tokens: List[str]
     label: str
+    split: str
 
     @classmethod
     def from_dict(cls, row):
@@ -92,7 +93,16 @@ class Corpus:
         train_size = len(pairs) - (test_size * 2)
         sizes = (train_size, test_size, test_size)
 
-        self.train, self.val, self.test = random_split(pairs, sizes)
+        splits = random_split(pairs, sizes)
+
+        for split, name in zip(splits, ('train', 'val', 'test')):
+
+            # Set split on corpus.
+            setattr(self, name, split)
+
+            # Set `split` field on individual lines.
+            for line, _ in split:
+                line.split = name
 
     def token_counts(self):
         """Collect all token -> count.
