@@ -321,10 +321,11 @@ class Classifier(nn.Module):
         x = self.merge(x)
         x = self.dropout(x)
 
-        return x
+        return x, (attn_dists, attn_ctx_dists)
 
     def forward(self, lines):
-        return self.predict(self.embed(lines))
+        x, _ = self.embed(lines)
+        return self.predict(x)
 
     def collate_batch(self, batch):
         """Labels -> indexes.
