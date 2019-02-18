@@ -315,7 +315,7 @@ class Classifier(nn.Module):
         # Attend over LSTM states.
         attn_ctx, attn_ctx_dists = self.attn_ctx(states)
 
-        x = torch.cat([x, attn, attn_ctx], 1)])
+        x = torch.cat([x, attn, attn_ctx], 1)
 
         # Blend encoder outputs, dropout.
         x = self.merge(x)
