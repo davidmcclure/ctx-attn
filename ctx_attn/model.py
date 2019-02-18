@@ -35,7 +35,7 @@ class PretrainedTokenEmbedding(nn.Module):
 
         self.embed = nn.Embedding.from_pretrained(self.vocab.vectors, freeze)
 
-        self.out_dim = self.embed.weight.shape[1]
+        self.out_size = self.embed.weight.shape[1]
 
     def forward(self, tokens):
         """Map to token embeddings.
@@ -50,7 +50,7 @@ class PretrainedTokenEmbedding(nn.Module):
 
 class CharEmbedding(nn.Embedding):
 
-    def __init__(self, embed_dim=15):
+    def __init__(self, embed_size=15):
         """Set vocab, map s->i.
         """
         self.vocab = (
@@ -62,7 +62,7 @@ class CharEmbedding(nn.Embedding):
         # <PAD> -> 0, <UNK> -> 1
         self._ctoi = {s: i+2 for i, s in enumerate(self.vocab)}
 
-        super().__init__(len(self.vocab)+2, embed_dim)
+        super().__init__(len(self.vocab)+2, embed_size)
 
     def ctoi(self, c):
         return self._ctoi.get(c, 1)
@@ -99,7 +99,7 @@ class CharEmbedding(nn.Embedding):
 
 class CharCNN(nn.Module):
 
-    def __init__(self, widths=range(1, 7), fpn=25, out_dim=512):
+    def __init__(self, widths=range(1, 7), fpn=25, out_size=512):
         """Conv layers + linear projection.
         """
         super().__init__()
@@ -113,11 +113,11 @@ class CharCNN(nn.Module):
             for w in self.widths
         ])
 
-        conv_dims = sum([c.out_channels for c in self.convs])
+        conv_sizes = sum([c.out_channels for c in self.convs])
 
-        self.out = nn.Linear(conv_dims, out_dim)
+        self.out = nn.Linear(conv_sizes, out_size)
 
-        self.out_dim = out_dim
+        self.out_size = out_size
 
     def forward(self, tokens):
         """Convolve, max pool, linear projection.
@@ -147,7 +147,7 @@ class TokenEmbedding(nn.Module):
         self.embed_t = PretrainedTokenEmbedding(token_counts)
         self.embed_c = CharCNN()
 
-        self.out_dim = self.embed_t.out_dim + self.embed_c.out_dim
+        self.out_size = self.embed_t.out_size + self.embed_c.out_size
 
     def forward(self, tokens):
         """Map to token embeddings, cat with character convolutions.
@@ -182,7 +182,7 @@ class TokenLSTM(nn.Module):
             bidirectional=True,
         )
 
-        self.out_dim = self.lstm.hidden_size * 2
+        self.out_size = self.lstm.hidden_size * 2
 
     def forward(self, xs):
         """Sort, pack, encode, reorder.
@@ -245,7 +245,7 @@ class Attention(nn.Module):
             nn.Linear(hidden_size, out_size),
         )
 
-        self.out_dim = out_size
+        self.out_size = out_size
 
     def forward(self, xs):
         """Score embeddings, regroup by seq, linearly combine states.
@@ -269,12 +269,14 @@ class Attention(nn.Module):
         return x_attn, dists
 
 
-CLF_EMBED_DIM = 512
+CLF_EMBED_SIZE = 512
+CLF_HIDDEN_SIZE = 256
 
 
 class Classifier(nn.Module):
 
-    def __init__(self, labels, token_counts, embed_dim=CLF_EMBED_DIM):
+    def __init__(self, labels, token_counts, embed_size=CLF_EMBED_SIZE,
+        hidden_size=CLF_HIDDEN_SIZE):
         """Initialize encoders + clf.
         """
         super().__init__()
@@ -284,18 +286,21 @@ class Classifier(nn.Module):
         self.ltoi = {label: i for i, label in enumerate(labels)}
 
         self.embed_tokens = TokenEmbedding(token_counts)
-        self.encode_lines = TokenLSTM(self.embed_tokens.out_dim)
+        self.encode_lines = TokenLSTM(self.embed_tokens.out_size)
 
-        self.attn = Attention(self.embed_tokens.out_dim)
-        self.attn_ctx = Attention(self.encode_lines.out_dim)
+        self.attn = Attention(self.embed_tokens.out_size)
+        self.attn_ctx = Attention(self.encode_lines.out_size)
 
-        line_dim = self.encode_lines.out_dim + self.attn.out_dim
-        self.merge = nn.Linear(line_dim, embed_dim)
+        self.merge = nn.Sequential(
+            nn.Linear(self.attn.out_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, embed_size),
+        )
 
         self.dropout = nn.Dropout()
 
         self.predict = nn.Sequential(
-            nn.Linear(embed_dim, len(labels)),
+            nn.Linear(embed_size, len(labels)),
             nn.LogSoftmax(1),
         )
 
@@ -317,10 +322,8 @@ class Classifier(nn.Module):
         # Attend over tokens or LSTM states.
         attn, dists = self.attn_ctx(states) if ctx else self.attn(xs)
 
-        x = torch.cat([x, attn], 1)
-
         # Blend encoder outputs, dropout.
-        x = self.merge(x)
+        x = self.merge(attn)
         x = self.dropout(x)
 
         return x, dists
