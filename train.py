@@ -116,18 +116,17 @@ def predict_df_rows(model, split):
     with tqdm(total=len(split)) as bar:
         for lines, yt in loader:
 
-            x, (dists, ctx_dists) = model.embed(lines)
+            x, dists = model.embed(lines)
             yp = model.predict(x).exp()
 
-            for line, ypi, ad, acd in zip(lines, yp, dists, ctx_dists):
+            for line, ypi, dist in zip(lines, yp, dists):
 
                 preds = dict(zip(model.labels, ypi.tolist()))
 
                 rows.append(dict(
                     **line.__dict__,
                     preds=preds,
-                    attn_dist=ad.tolist(),
-                    attn_ctx_dist=acd.tolist(),
+                    dist=dist.tolist(),
                 ))
 
             bar.update(len(lines))

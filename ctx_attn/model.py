@@ -289,12 +289,7 @@ class Classifier(nn.Module):
         self.attn = Attention(self.embed_tokens.out_dim)
         self.attn_ctx = Attention(self.encode_lines.out_dim)
 
-        line_dim = (
-            self.encode_lines.out_dim +
-            self.attn.out_dim +
-            self.attn_ctx.out_dim
-        )
-
+        line_dim = self.encode_lines.out_dim + self.attn.out_dim
         self.merge = nn.Linear(line_dim, embed_dim)
 
         self.dropout = nn.Dropout()
@@ -304,7 +299,7 @@ class Classifier(nn.Module):
             nn.LogSoftmax(1),
         )
 
-    def embed(self, lines):
+    def embed(self, lines, ctx=False):
         """Embed lines.
         """
         tokens = [line.tokens for line in lines]
@@ -319,19 +314,16 @@ class Classifier(nn.Module):
         # Embed lines.
         x, states = self.encode_lines(xs)
 
-        # Attend over raw token embeddings.
-        attn, attn_dists = self.attn(xs)
+        # Attend over tokens or LSTM states.
+        attn, dists = self.attn_ctx(states) if ctx else self.attn(xs)
 
-        # Attend over LSTM states.
-        attn_ctx, attn_ctx_dists = self.attn_ctx(states)
-
-        x = torch.cat([x, attn, attn_ctx], 1)
+        x = torch.cat([x, attn], 1)
 
         # Blend encoder outputs, dropout.
         x = self.merge(x)
         x = self.dropout(x)
 
-        return x, (attn_dists, attn_ctx_dists)
+        return x, dists
 
     def forward(self, lines):
         x, _ = self.embed(lines)
